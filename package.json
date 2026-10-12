@@ -12,6 +12,7 @@
     "dev:pwa": "PWA_DEV=1 next dev"
   },
   "dependencies": {
+    "@ai-sdk/mistral": "^4.0.62",
     "@ducanh2912/next-pwa": "^10.2.9",
     "@emotion/cache": "^11.14.0",
     "@emotion/react": "^11.14.0",
@@ -20,6 +21,8 @@
     "@mui/material": "^6.5.0",
     "@mui/material-nextjs": "^6.5.0",
     "@mui/x-charts": "^7.29.1",
+    "ai": "^7.0.137",
+    "firebase": "^13.0.0",
     "idb": "^8.0.4",
     "next": "14.2.35",
     "react": "^18",

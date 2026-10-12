@@ -13,6 +13,7 @@ import Typography from "@mui/material/Typography";
 import PageHeader from "@/components/PageHeader";
 import SectionTitle from "@/components/SectionTitle";
 import { useAppData } from "@/context/AppDataContext";
+import { useAuth } from "@/context/AuthContext";
 import { buildICS, downloadFile } from "@/lib/ics";
 import {
   notificationSupported,
@@ -38,6 +39,7 @@ const isStandalone = (): boolean =>
 export default function SettingsScreen() {
   const { settings, updateSettings, tasks, today, exportBackup, importBackup, resetAll } =
     useAppData();
+  const { user, logout } = useAuth();
   const [permission, setPermission] = useState<PermissionState>("default");
   const [standalone, setStandalone] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -135,6 +137,17 @@ export default function SettingsScreen() {
           </Alert>
         )}
 
+        <SectionTitle>Tài khoản</SectionTitle>
+        <Card className="mb-2 flex flex-col gap-3 p-4">
+          <Typography variant="body2" sx={{ color: colors.muted }}>
+            {user?.email}. Phiên đăng nhập được giữ cho đến khi bạn đăng xuất. Dữ liệu nằm trên Firebase,
+            dùng chung cho các điện thoại đăng nhập cùng tài khoản.
+          </Typography>
+          <Button variant="outlined" onClick={() => void logout()}>
+            Đăng xuất
+          </Button>
+        </Card>
+
         <SectionTitle>Thông báo</SectionTitle>
         <Card className="flex flex-col gap-3 p-4">
           <FormControlLabel
@@ -208,7 +221,7 @@ export default function SettingsScreen() {
         <SectionTitle>Sao lưu dữ liệu</SectionTitle>
         <Card className="flex flex-col gap-3 p-4">
           <Typography variant="body2" sx={{ color: colors.muted }}>
-            Dữ liệu chỉ nằm trên máy này. Nên sao lưu định kỳ.
+            Bản sao lưu để phòng khi đổi tài khoản. Dữ liệu chính nằm trên Firebase.
           </Typography>
           <Box className="flex gap-2">
             <Button variant="outlined" onClick={exportJSON} fullWidth>

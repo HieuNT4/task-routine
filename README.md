@@ -1,10 +1,10 @@
 # Lịch sinh hoạt — PWA nhắc nhở cá nhân
 
-PWA chạy trên điện thoại, nhắc lịch sinh hoạt hàng ngày cho 1 người. Không server, không database,
-không đăng nhập. Toàn bộ dữ liệu nằm trên máy (localStorage + IndexedDB). Deploy miễn phí trên Vercel.
+PWA chạy trên điện thoại, nhắc lịch sinh hoạt. Đăng nhập bằng email, mỗi tài khoản một lịch.
+Dữ liệu nằm trên Firestore (gói Spark, miễn phí) và đồng bộ giữa các điện thoại. Deploy trên Vercel.
 
-**Stack:** Next.js 14 (App Router) · TypeScript · Tailwind CSS · Material UI · `@ducanh2912/next-pwa`
-(bản fork đang được bảo trì của `next-pwa`, hỗ trợ App Router) · `idb` · `@mui/x-charts`.
+**Stack:** Next.js 14 (App Router) · TypeScript · Tailwind CSS · Material UI · Firebase Auth + Firestore ·
+`@ducanh2912/next-pwa` · `@ai-sdk/mistral`.
 
 ## Chạy local
 

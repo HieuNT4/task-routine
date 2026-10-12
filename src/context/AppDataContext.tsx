@@ -10,14 +10,22 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { db } from "@/lib/db";
-import { todayISO } from "@/lib/date";
 import {
-  buildDefaultTasks,
-  buildDefaultMenu,
-  DEFAULT_SETTINGS,
-  DEFAULT_SHOPPING,
-} from "@/lib/defaults";
+  loadOrSeedProfile,
+  putCompletion,
+  putMetrics,
+  putWater,
+  removeCompletion,
+  replaceLogs,
+  saveProfile,
+  watchCompletions,
+  watchMetrics,
+  watchProfile,
+  watchWater,
+  emptyProfile,
+} from "@/lib/cloud";
+import { todayISO } from "@/lib/date";
+import { buildDefaultMenu, DEFAULT_SETTINGS, DEFAULT_SHOPPING } from "@/lib/defaults";
 import {
   applyCompletion,
   applyPostpone,
@@ -25,17 +33,7 @@ import {
   nextOccurrence,
   revertCompletion,
 } from "@/lib/schedule";
-import {
-  clearAppStorage,
-  loadMenu,
-  loadSettings,
-  loadShopping,
-  loadTasks,
-  saveMenu,
-  saveSettings,
-  saveShopping,
-  saveTasks,
-} from "@/lib/storage";
+import { useAuth } from "./AuthContext";
 import type {
   BackupFile,
   Completion,
@@ -75,6 +73,8 @@ interface AppDataValue {
 const AppDataContext = createContext<AppDataValue | null>(null);
 
 export function AppDataProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  const uid = user?.uid ?? "";
   const [ready, setReady] = useState(false);
   const [today, setToday] = useState<string>(() => todayISO());
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -85,6 +85,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [water, setWater] = useState<Record<string, number>>({});
   const [metrics, setMetrics] = useState<Metrics[]>([]);
   const waterRef = useRef<Record<string, number>>({});
+  const applyingRemote = useRef(false);
 
   const commitWater = useCallback((next: Record<string, number>) => {
     waterRef.current = next;
@@ -92,34 +93,43 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (!uid) return;
     let cancelled = false;
-    const init = async () => {
-      const now = todayISO();
-      const storedTasks = loadTasks();
-      const initialTasks = storedTasks ?? buildDefaultTasks(now);
-      if (!storedTasks) saveTasks(initialTasks);
-
-      const [allCompletions, allWater, allMetrics] = await Promise.all([
-        db.allCompletions(),
-        db.allWater(),
-        db.allMetrics(),
-      ]);
+    const start = async () => {
+      const profile = await loadOrSeedProfile(uid);
       if (cancelled) return;
-
-      setTasks(initialTasks);
-      setSettings(loadSettings(DEFAULT_SETTINGS));
-      setMenu(loadMenu(buildDefaultMenu(now)));
-      setShopping(loadShopping(DEFAULT_SHOPPING));
-      setCompletions(allCompletions);
-      commitWater(Object.fromEntries(allWater.map((w) => [w.date, w.ml])));
-      setMetrics(allMetrics.sort((a, b) => a.date.localeCompare(b.date)));
+      applyingRemote.current = true;
+      setTasks(profile.tasks);
+      setSettings(profile.settings);
+      setMenu(profile.menu);
+      setShopping(profile.shopping);
       setReady(true);
     };
-    init();
+    void start();
+
+    const unsubProfile = watchProfile(uid, (profile) => {
+      applyingRemote.current = true;
+      setTasks(profile.tasks);
+      setSettings(profile.settings);
+      setMenu(profile.menu);
+      setShopping(profile.shopping);
+    });
+    const unsubCompletions = watchCompletions(uid, setCompletions);
+    const unsubWater = watchWater(uid, (rows) => {
+      commitWater(Object.fromEntries(rows.map((row) => [row.date, row.ml])));
+    });
+    const unsubMetrics = watchMetrics(uid, (rows) => {
+      setMetrics([...rows].sort((a, b) => a.date.localeCompare(b.date)));
+    });
+
     return () => {
       cancelled = true;
+      unsubProfile();
+      unsubCompletions();
+      unsubWater();
+      unsubMetrics();
     };
-  }, [commitWater]);
+  }, [commitWater, uid]);
 
   // Roll over to a new day while the app stays open
   useEffect(() => {
@@ -131,17 +141,16 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (ready) saveTasks(tasks);
-  }, [ready, tasks]);
-  useEffect(() => {
-    if (ready) saveSettings(settings);
-  }, [ready, settings]);
-  useEffect(() => {
-    if (ready) saveMenu(menu);
-  }, [ready, menu]);
-  useEffect(() => {
-    if (ready) saveShopping(shopping);
-  }, [ready, shopping]);
+    if (!ready || !uid) return;
+    if (applyingRemote.current) {
+      applyingRemote.current = false;
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void saveProfile(uid, { tasks, settings, menu, shopping });
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [menu, ready, settings, shopping, tasks, uid]);
 
   const doneKeys = useMemo(() => new Set(completions.map((c) => c.key)), [completions]);
 
@@ -158,7 +167,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     async (task: Task, date: string) => {
       const key = completionKey(date, task.id);
       if (doneKeys.has(key)) {
-        await db.deleteCompletion(key);
+        await removeCompletion(uid, key);
         const remaining = completions.filter((c) => c.key !== key);
         const previousDone = remaining
           .filter((c) => c.taskId === task.id)
@@ -175,11 +184,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         taskId: task.id,
         doneAt: new Date().toISOString(),
       };
-      await db.putCompletion(completion);
+      await putCompletion(uid, completion);
       setCompletions((prev) => [...prev, completion]);
       replaceTask(applyCompletion(task, date, today));
     },
-    [completions, doneKeys, replaceTask, today],
+    [completions, doneKeys, replaceTask, today, uid],
   );
 
   const postponeTask = useCallback(
@@ -214,17 +223,17 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       // Read from the ref so rapid taps accumulate before React re-renders
       const ml = Math.max(0, (waterRef.current[day] ?? 0) + deltaMl);
       commitWater({ ...waterRef.current, [day]: ml });
-      await db.putWater({ date: day, ml });
+      await putWater(uid, { date: day, ml });
     },
-    [commitWater, today],
+    [commitWater, today, uid],
   );
 
   const saveMetrics = useCallback(async (m: Metrics) => {
-    await db.putMetrics(m);
+    await putMetrics(uid, m);
     setMetrics((prev) =>
       [...prev.filter((x) => x.date !== m.date), m].sort((a, b) => a.date.localeCompare(b.date)),
     );
-  }, []);
+  }, [uid]);
 
   const updateSettings = useCallback((patch: Partial<Settings>) => {
     setSettings((prev) => ({ ...prev, ...patch }));
@@ -249,10 +258,16 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     if (backup.version !== 1 || !Array.isArray(backup.tasks)) {
       throw new Error("File sao lưu không hợp lệ");
     }
-    await db.replaceAll({
+    await replaceLogs(uid, {
       completions: backup.completions ?? [],
       water: backup.water ?? [],
       metrics: backup.metrics ?? [],
+    });
+    await saveProfile(uid, {
+      tasks: backup.tasks,
+      settings: { ...DEFAULT_SETTINGS, ...backup.settings },
+      menu: backup.menu?.weeks ? backup.menu : buildDefaultMenu(todayISO()),
+      shopping: backup.shopping ?? DEFAULT_SHOPPING,
     });
     setTasks(backup.tasks);
     setSettings({ ...DEFAULT_SETTINGS, ...backup.settings });
@@ -261,20 +276,22 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     setCompletions(backup.completions ?? []);
     commitWater(Object.fromEntries((backup.water ?? []).map((w) => [w.date, w.ml])));
     setMetrics([...(backup.metrics ?? [])].sort((a, b) => a.date.localeCompare(b.date)));
-  }, [commitWater]);
+  }, [commitWater, uid]);
 
   const resetAll = useCallback(async () => {
-    await db.replaceAll({ completions: [], water: [], metrics: [] });
-    clearAppStorage();
     const now = todayISO();
-    setTasks(buildDefaultTasks(now));
-    setSettings(DEFAULT_SETTINGS);
-    setMenu(buildDefaultMenu(todayISO()));
-    setShopping(DEFAULT_SHOPPING);
+    const profile = emptyProfile(now);
+    await replaceLogs(uid, { completions: [], water: [], metrics: [] });
+    await saveProfile(uid, profile);
+    applyingRemote.current = true;
+    setTasks(profile.tasks);
+    setSettings(profile.settings);
+    setMenu(profile.menu);
+    setShopping(profile.shopping);
     setCompletions([]);
     commitWater({});
     setMetrics([]);
-  }, [commitWater]);
+  }, [commitWater, uid]);
 
   const value = useMemo<AppDataValue>(
     () => ({
